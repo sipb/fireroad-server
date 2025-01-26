@@ -236,7 +236,7 @@ def process_info_item(item, attributes, write_virtual_status=False):
         if len(sched) > 0:
             for attr in sched_attrs:
                 if attr in attributes:
-                    attributes[attr].update(sched.copy())
+                    attributes[attr].update(sched)
                 else:
                     attributes[attr] = sched.copy()
         if len(quarter_info) > 0:
