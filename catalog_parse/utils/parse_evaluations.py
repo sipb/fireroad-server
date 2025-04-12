@@ -10,7 +10,7 @@ class EvaluationConstants:
     out_of_class_hours = "oc_hours"
     eligible_raters = "eligible"
     responded_raters = "resp"
-    iap_term = "IAP"
+    iap_term = "JA"
 
 KEYS_TO_AVERAGE = {
     EvaluationConstants.rating: CourseAttribute.averageRating,
@@ -58,10 +58,17 @@ def parse_evaluations(evals, courses):
                     if key not in term_data:
                         continue
                     value = term_data[key]
-                    averaging_data.setdefault(key, []).append(value)
+                    # Get which academic year this is, so that we can weight
+                    # appropriately in the average
+                    year = int(term_data[EvaluationConstants.term][:-2])
+                    averaging_data.setdefault(key, []).append((value, year))
 
         for eval_key, course_key in KEYS_TO_AVERAGE.items():
             if eval_key not in averaging_data: continue
-            n = len(averaging_data[eval_key])
-            value = sum(averaging_data[eval_key]) / float(n)
-            course.loc[course_key] = "{:.2f}".format(value)
+            values = [value for value, year in averaging_data[eval_key]]
+            max_year = max(year for value, year in averaging_data[eval_key])
+            weights = [0.5 ** (max_year - year)
+                       for value, year in averaging_data[eval_key]]
+            total = sum(v * w for v, w in zip(values, weights))
+            average = total / sum(weights)
+            course.loc[course_key] = "{:.2f}".format(average)
