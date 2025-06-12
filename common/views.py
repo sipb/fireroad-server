@@ -319,7 +319,9 @@ def finish_login_redirect(access_info, uri):
     code = save_temporary_code(access_info)
     if not re.search(r'^https?://', uri): # Redirect requires a protocol
         uri = 'https://' + uri
-    return redirect(uri + "?code=" + code)
+
+    redirect_uri = uri + ("?" if "?" not in uri else "&") + "code=" + code
+    return redirect(redirect_uri)
 
 def fetch_token(request):
     """
