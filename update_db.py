@@ -78,7 +78,7 @@ def parse_related_file(path):
     """Updates the catalog database with the related subjects file."""
     with open(path, 'r') as file:
         for line in file:
-            comps = line.strip().replace("[J]", "").split(",")
+            comps = line.strip().replace("[J]", "").replace("J", "").split(",")
             try:
                 course = Course.public_courses().get(subject_id=comps[0])
                 course.related_subjects = ",".join(comps[1:])
@@ -168,10 +168,13 @@ def update_requirements():
     req_urls = compute_semester_delta(list_semesters()[-1].split('-'), 0, 0)
     for path_name in req_urls[REQUIREMENTS_INFO_KEY]:
         print(path_name)
-        new_req = RequirementsList.objects.create(list_id=os.path.basename(path_name))
-        with open(os.path.join(settings.CATALOG_BASE_DIR, path_name), 'r') as file:
-            new_req.parse(file.read())
-        new_req.save()
+        try:
+            new_req = RequirementsList.objects.create(list_id=os.path.basename(path_name))
+            with open(os.path.join(settings.CATALOG_BASE_DIR, path_name), 'r') as file:
+                new_req.parse(file.read())
+            new_req.save()
+        except Exception as e:
+            print("Encountered exception: {}".format(e))
 
     print(("The database was successfully updated with {} requirements files.".format(len(req_urls[REQUIREMENTS_INFO_KEY]))))
 

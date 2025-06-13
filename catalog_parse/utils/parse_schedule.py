@@ -6,7 +6,7 @@ from .catalog_constants import *
 # 12.S592: Lecture: xyz
 subject_id_regex = r'^([A-Z0-9.-]+)(\[J\])?$'
 
-quarter_info_regex = r"\(?(begins|ends)\s+(.+?)(\.|\))"
+quarter_info_regex = r"\(?(begins|ends|meets)\s+(.+?)(\.|\))"
 
 # Class type regex matches "Lecture:abc XX:"
 class_type_regex = r"([A-z0-9.-]+):(.+?)(?=\Z|\w+:)"
@@ -17,12 +17,16 @@ time_regex = r"(?<!\(\s)[^MTWRFS]?([MTWRFS]+)\s*(?:([0-9-\.:]+)|(EVE\s*\(\s*(.+?
 # Matches room numbers and building names
 location_regex = r"\(\s*([A-Z0-9,\s-]+)\s*\)"
 
+# Matches semesters (for classes that have schedules for multiple semesters)
+semester_regex = r"^(Fall|Spring|IAP)$"
+
 def parse_schedule(schedule):
     """
-    Parse the given schedule string into a standardized format. Returns a
-    tuple ({subject_id: schedule string}, quarter information, virtual status), where quarter
-    information may be empty. If no subject IDs are found in the schedule
-    string, the schedule dictionary will have the empty string as the only key.
+    Parse the given schedule string into a standardized format. Returns a tuple
+    ({subject_id: schedule string}, quarter information, semester, virtual status),
+    where quarter information and semester may be empty. If no subject IDs are
+    found in the schedule string, the schedule dictionary will have the empty
+    string as the only key.
 
     Virtual status may be empty (if no schedule) or one of the following strings:
         "Virtual": All of the class's sections are marked virtual.
@@ -38,6 +42,7 @@ def parse_schedule(schedule):
     """
 
     quarter_info = ""
+    semester = ""
     has_virtual = False
     has_in_person = False
 
@@ -50,7 +55,12 @@ def parse_schedule(schedule):
     if match is not None:
         schedule_type = match.group(1)
         date = match.group(2)
-        quarter_info = ("1" if schedule_type == "begins" else "0") + "," + date
+        if schedule_type == "begins":
+            quarter_info = "1," + date
+        elif schedule_type == "ends":
+            quarter_info = "0," + date
+        elif schedule_type == "meets":
+            quarter_info = "2," + date
 
     trimmed_schedule = re.sub(quarter_info_regex, "", schedule, flags=re.I)
 
@@ -62,7 +72,10 @@ def parse_schedule(schedule):
 
     for match in re.finditer(class_type_regex, trimmed_schedule):
         schedule_type = match.group(1)
-        if re.match(subject_id_regex, schedule_type):
+        if re.match(semester_regex, schedule_type):
+            semester = schedule_type
+            continue
+        elif re.match(subject_id_regex, schedule_type):
             schedule_comps = schedule_comps_by_id.setdefault(schedule_type, [])
             multiple_subjects = True
             continue
@@ -110,4 +123,4 @@ def parse_schedule(schedule):
     virtual_items = (["Virtual"] if has_virtual else []) + (["In-Person"] if has_in_person else [])
     joined_virtual = "/".join(virtual_items)
 
-    return joined_scheds, quarter_info, joined_virtual
+    return joined_scheds, quarter_info, semester, joined_virtual

@@ -42,7 +42,7 @@ COURSE_NUMBERS = [
     "14", "15", "16", "17",
     "18", "20", "21", "21A",
     "21W", "CMS", "21G", "21H",
-    "21L", "21M", "WGS", "22",
+    "21L", "21M", "21T", "WGS", "22",
     "24", "CC", "CSB", "EC",
     "EM", "ES", "HST", "IDS",
     "MAS", "SCM",
@@ -185,7 +185,10 @@ def subject_title_regex(subject_id):
     """Makes a regex that detects a subject title when the subject ID is present,
     for example, "6.006 Introduction to Algorithms". Also detects parenthesized
     additional subjects that this subject title may contain."""
-    return "{}(?:{})?\\s*(\\([A-Z0-9.,\s-]+\\))?\\s+".format(re.escape(subject_id), re.escape(CatalogConstants.joint_class))
+    return r"{}(?:{})?\s*(\([A-Z0-9.,\s-]+\))?\s+".format(
+        re.escape(subject_id),
+        r"|".join(re.escape(x) for x in CatalogConstants.joint_class)
+    )
 
 def process_info_item(item, attributes, write_virtual_status=False):
     """Determines the type of the given info item and adds it into the
@@ -215,11 +218,30 @@ def process_info_item(item, attributes, write_virtual_status=False):
             attributes[CourseAttribute.hasFinal] = True
             trimmed_item = trimmed_item.replace(CatalogConstants.final_flag, "")
 
-        sched, quarter_info, virtual_status = parse_schedule(trimmed_item.strip().replace("\n", ""))
+        sched, quarter_info, sem, virtual_status = parse_schedule(trimmed_item.strip().replace("\n", ""))
+
+        sched_attrs = [CourseAttribute.schedule]
+        quarter_info_attrs = [CourseAttribute.quarterInformation]
+
+        if sem == "Fall":
+            sched_attrs.append(CourseAttribute.scheduleFall)
+            quarter_info_attrs.append(CourseAttribute.quarterInformationFall)
+        elif sem == "IAP":
+            sched_attrs.append(CourseAttribute.scheduleIAP)
+            quarter_info_attrs.append(CourseAttribute.quarterInformationIAP)
+        elif sem == "Spring":
+            sched_attrs.append(CourseAttribute.scheduleSpring)
+            quarter_info_attrs.append(CourseAttribute.quarterInformationSpring)
+
         if len(sched) > 0:
-            attributes[CourseAttribute.schedule] = sched
+            for attr in sched_attrs:
+                if attr in attributes:
+                    attributes[attr].update(sched)
+                else:
+                    attributes[attr] = sched.copy()
         if len(quarter_info) > 0:
-            attributes[CourseAttribute.quarterInformation] = quarter_info
+            for attr in quarter_info_attrs:
+                attributes[attr] = quarter_info
         if write_virtual_status:
             attributes[CourseAttribute.virtualStatus] = virtual_status
         def_not_desc = True
@@ -230,11 +252,15 @@ def process_info_item(item, attributes, write_virtual_status=False):
         if match.group(1) is not None and len(match.group(1)) > 0:
             attributes[CourseAttribute.subjectID] = match.group(0).strip()
         end = match.end(0)
-        attributes[CourseAttribute.title] = item[end:].replace(CatalogConstants.joint_class, "").strip()
+        title = item[end:]
+        for suffix in CatalogConstants.joint_class:
+            title = re.sub(re.escape(suffix) + r"$", "", title)
+        title = title.strip()
+        attributes[CourseAttribute.title] = title
         def_not_desc = True
 
     # Old subject ID
-    elif re.match(r'\(\d{1,2}.[A-Z0-9]{1,4}\)$', item):
+    elif re.match(r'\(' + subject_id_regex + '\)$', item):
         attributes[CourseAttribute.oldID] = item[1:-1]
         def_not_desc = True
 
@@ -264,6 +290,9 @@ def process_info_item(item, attributes, write_virtual_status=False):
             elif prefix.lower() == CatalogConstants.equivalent_subj_prefix:
                 attributes[CourseAttribute.equivalentSubjects] = contents
             elif prefix.lower() == CatalogConstants.joint_subj_prefix:
+                for suffix in CatalogConstants.joint_class:
+                    for i in range(len(contents)):
+                        contents[i] = re.sub(re.escape(suffix) + r"$", "", contents[i])
                 attributes[CourseAttribute.jointSubjects] = contents
             else:
                 print("Unrecognized prefix")
@@ -392,7 +421,7 @@ def merge_duplicates(courses):
                         total_course[key] = correct_val
 
                 # The 'best' value is the longest value
-                best_val = max(vals, key=lambda x: len(str(x)))
+                best_val = max(vals, key=lambda x: len(unicode(x)))
                 total_course[key] = best_val
             merged_courses.append(total_course)
         else:
@@ -423,8 +452,15 @@ def courses_from_dept_code(dept_code, **options):
             continue
 
         props = extract_course_properties(nodes)
-        attribs = {CourseAttribute.subjectID: id.replace('[J]', '')}
-        attribs[CourseAttribute.URL] = catalog_url + "#" + id
+
+        id = id.replace('[J]', '')
+        if id.endswith('J'):
+            id = id[:-1]
+
+        attribs = {
+            CourseAttribute.subjectID: id,
+            CourseAttribute.URL: catalog_url + "#" + id
+        }
         for prop in props:
             process_info_item(prop, attribs, **options)
 
@@ -451,8 +487,12 @@ def courses_from_dept_code(dept_code, **options):
                 courses.append(copied_course)
         else:
             # Use only the first item in the schedule dictionary
-            if CourseAttribute.schedule in attribs:
-                attribs[CourseAttribute.schedule] = list(attribs[CourseAttribute.schedule].values())[0]
+            for attrib in [CourseAttribute.schedule,
+                           CourseAttribute.scheduleFall,
+                           CourseAttribute.scheduleIAP,
+                           CourseAttribute.scheduleSpring]:
+                if attrib in attribs:
+                    attribs[attrib] = list(attribs[attrib].values())[0]
             courses.append(attribs)
 
         # Autofill regions that were empty with the subsequent course information
@@ -500,13 +540,12 @@ def write_courses(courses, filepath, attributes):
 
 ### Main method
 
-def parse(output_dir, evaluations_path=None, equivalences_path=None, write_related=True,
+def parse(output_dir, equivalences_path=None, write_related=True,
           progress_callback=None, write_virtual_status=False):
     """
     Parses the catalog from the web and writes the files to the given directory.
 
     output_dir: path to a directory into which to write the results
-    evaluations_path: path to a JS file containing subject evaluations
     equivalences_path: path to a JSON file containing equivalences, i.e.
         [[["6.0001", "6.0002"], "6.00"], ...]
     write_related: if True, compute the related and features files as well
@@ -517,11 +556,6 @@ def parse(output_dir, evaluations_path=None, equivalences_path=None, write_relat
 
     if not os.path.exists(output_dir):
         os.mkdir(output_dir)
-
-    if evaluations_path is not None:
-        eval_data = load_evaluation_data(evaluations_path)
-    else:
-        eval_data = None
 
     # Parse each department
     all_courses = []
@@ -551,10 +585,6 @@ def parse(output_dir, evaluations_path=None, equivalences_path=None, write_relat
             if original_html is None:
                 original_html = LAST_PAGE_HTML
 
-        # Add in eval information
-        if eval_data is not None:
-            parse_evaluations(eval_data, dept_courses)
-
         dept_courses = merge_duplicates(dept_courses)
         course_dict = {course[CourseAttribute.subjectID]: course for course in dept_courses}
 
@@ -582,18 +612,15 @@ def parse(output_dir, evaluations_path=None, equivalences_path=None, write_relat
 
 if __name__ == '__main__':
     if len(sys.argv) < 2:
-        print("Usage: python catalog_parser.py output-dir [evaluations-file] [equivalences-file]")
+        print("Usage: python catalog_parser.py output-dir [equivalences-file]")
         exit(1)
 
     output_dir = sys.argv[1]
-    if len(sys.argv) > 2:
-        eval_path = sys.argv[2]
-    else:
-        eval_path = None
 
-    if len(sys.argv) > 3:
-        equiv_path = sys.argv[3]
+    if len(sys.argv) > 2:
+        equiv_path = sys.argv[2]
     else:
         equiv_path = None
 
-    parse(output_dir, eval_path, equiv_path, write_related=(not '-norel' in sys.argv))
+    parse(output_dir, equivalences_path=equiv_path,
+          write_related=('-norel' not in sys.argv))

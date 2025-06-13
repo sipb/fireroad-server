@@ -10,7 +10,8 @@ import csv
 import re
 import pandas as pd
 import numpy as np
-from .utils.catalog_constants import *
+from utils.catalog_constants import *
+from utils.parse_evaluations import *
 
 KEYS_TO_WRITE = [key for key in CONDENSED_ATTRIBUTES if key != CourseAttribute.subjectID] + [CourseAttribute.sourceSemester, CourseAttribute.isHistorical]
 
@@ -51,9 +52,15 @@ def make_corrections(corrections, consensus):
             consensus.loc[subject_id] = {col: correction.get(col, None) for col in consensus.columns}
 
 
-def build_consensus(base_path, out_path, corrections=None):
+def build_consensus(base_path, out_path, corrections=None,
+                    evaluations_path=None):
     if not os.path.exists(out_path):
         os.mkdir(out_path)
+
+    if evaluations_path is not None:
+        eval_data = load_evaluation_data(evaluations_path)
+    else:
+        eval_data = None
 
     semester_data = {}
 
@@ -78,15 +85,27 @@ def build_consensus(base_path, out_path, corrections=None):
         # Get set of old subject IDs that have been renumbered in future
         # semesters
         old_ids = set().union(*(
-            data.loc[:, CourseAttribute.oldID].dropna()
+            data.loc[:, CourseAttribute.oldID].replace("", np.nan).dropna()
             if CourseAttribute.oldID in data.columns else []
             for semester, data in semester_data[:i]
         ))
+        # Remove the old IDs
         data = data.loc[~data[CourseAttribute.subjectID].isin(old_ids)]
 
         if consensus is None:
             consensus = data
         else:
+            if CourseAttribute.oldID in data.columns:
+                # Propagate old ID field to newer semesters
+                for _, subject_id, old_id in (
+                    data.replace("", np.nan)
+                    .dropna(subset=[CourseAttribute.oldID])
+                    .loc[:, (CourseAttribute.subjectID, CourseAttribute.oldID)]
+                    .itertuples()
+                ):
+                    consensus[CourseAttribute.oldID][
+                        consensus[CourseAttribute.subjectID] == subject_id
+                    ] = old_id
             consensus = pd.concat([consensus, data], sort=False)
 
         consensus = consensus.drop_duplicates(subset=[CourseAttribute.subjectID], keep='first')
@@ -94,7 +113,11 @@ def build_consensus(base_path, out_path, corrections=None):
         last_size = len(consensus)
 
     consensus.set_index(CourseAttribute.subjectID, inplace=True)
-    make_corrections(corrections, consensus)
+    if corrections is not None:
+        make_corrections(corrections, consensus)
+
+    if eval_data is not None:
+        parse_evaluations(eval_data, consensus)
 
     print("Writing courses...")
     seen_departments = set()
@@ -133,15 +156,20 @@ def write_df(df, path):
         file.write(df.to_csv(header=False, quoting=csv.QUOTE_NONNUMERIC).replace('""', ''))
 
 if __name__ == "__main__":
-    if len(sys.argv) < 3:
-        print("Provide the directory containing raw semester catalog data, and the directory into which to write the output.")
-        exit()
+    if len(sys.argv) < 2:
+        print("Usage: python consensus_catalog.py raw-dir out-dir [evaluations-file]")
+        exit(1)
 
     in_path = sys.argv[1]
     out_path = sys.argv[2]
+
+    if len(sys.argv) > 2:
+        eval_path = sys.argv[3]
+    else:
+        eval_path = None
 
     if os.path.exists(out_path):
         print(("Fatal: the directory {} already exists. Please delete it or choose a different location.".format(out_path)))
         exit(1)
 
-    build_consensus(in_path, out_path)
+    build_consensus(in_path, out_path, evaluations_path=eval_path)

@@ -10,7 +10,7 @@ class EvaluationConstants:
     out_of_class_hours = "oc_hours"
     eligible_raters = "eligible"
     responded_raters = "resp"
-    iap_term = "IAP"
+    iap_term = "JA"
 
 KEYS_TO_AVERAGE = {
     EvaluationConstants.rating: CourseAttribute.averageRating,
@@ -34,24 +34,41 @@ def parse_evaluations(evals, courses):
     """
     Adds attributes to each course based on eval data in the given dictionary.
     """
-
-    for i, course_attribs in enumerate(courses):
-        subject_id = course_attribs[CourseAttribute.subjectID]
-        if subject_id not in evals:
+    for i, course in courses.iterrows():
+        # i is the index of the DataFrame, which is the subject ID
+        subject_ids = list(filter(None, [i, course[CourseAttribute.oldID]]))
+        if not any(x in evals for x in subject_ids):
             continue
 
         averaging_data = {}
-        for term_data in evals[subject_id]:
-            # if course is offered fall/spring but an eval is for IAP, ignore
-            if EvaluationConstants.iap_term in term_data[EvaluationConstants.term] and (course_attribs.get(CourseAttribute.offeredFall, False) or course_attribs.get(CourseAttribute.offeredSpring, False)):
+        for subject_id in subject_ids:
+            if subject_id not in evals:
                 continue
-
-            for key in KEYS_TO_AVERAGE:
-                if key not in term_data:
+            for term_data in evals[subject_id]:
+                # if course is offered fall/spring but an eval is for IAP, ignore
+                if (EvaluationConstants.iap_term in term_data[EvaluationConstants.term] and
+                        (course[CourseAttribute.offeredFall] == "Y" or
+                         course[CourseAttribute.offeredSpring] == "Y")):
                     continue
-                value = term_data[key]
-                averaging_data.setdefault(key, []).append(value)
+                # if no respondents, ignore
+                if term_data[EvaluationConstants.responded_raters] == 0:
+                    continue
+
+                for key in KEYS_TO_AVERAGE:
+                    if key not in term_data:
+                        continue
+                    value = term_data[key]
+                    # Get which academic year this is, so that we can weight
+                    # appropriately in the average
+                    year = int(term_data[EvaluationConstants.term][:-2])
+                    averaging_data.setdefault(key, []).append((value, year))
 
         for eval_key, course_key in list(KEYS_TO_AVERAGE.items()):
             if eval_key not in averaging_data: continue
-            course_attribs[course_key] = sum(averaging_data[eval_key]) / float(len(averaging_data[eval_key]))
+            values = [value for value, year in averaging_data[eval_key]]
+            max_year = max(year for value, year in averaging_data[eval_key])
+            weights = [0.5 ** (max_year - year)
+                       for value, year in averaging_data[eval_key]]
+            total = sum(v * w for v, w in zip(values, weights))
+            average = total / sum(weights)
+            course.loc[course_key] = "{:.2f}".format(average)
