@@ -14,7 +14,6 @@ from StringIO import StringIO
 from requirements.diff import *
 import catalog_parse as cp
 
-version_recursion_threshold = 100
 separator = "#,#"
 global_file_names = ["departments", "enrollment"]
 requirements_dir = "requirements"
@@ -47,10 +46,20 @@ def read_delta(url):
         return ret
 
 def compute_updated_files(version, base_dir):
+    """
+    Returns the set of files that have been updated since the given version,
+    along with the version where the most recent update occurred. This can read
+    either catalog delta files or requirements delta files, depending on the value
+    of the base_dir variable. (See the use sites of this function in
+    compute_semester_delta for more clarity on this.)
+    """
     updated_files = set()
+    # Start at version + 1 and scan upwards from there
     version_num = version + 1
+    # This will store the version number where the catalog was most recently
+    # updated
     updated_version = version
-    while version_num < version_recursion_threshold:
+    while True:
         url = os.path.join(base_dir, delta_file_prefix + '{}.txt'.format(version_num))
         if not os.path.exists(url):
             break
