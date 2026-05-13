@@ -43,9 +43,9 @@ COURSE_NUMBERS = [
     "18", "20", "21", "21A",
     "21W", "CMS", "21G", "21H",
     "21L", "21M", "21T", "WGS", "22",
-    "24", "CC", "CSB", "EC",
-    "EM", "ES", "HST", "IDS",
-    "MAS", "SCM",
+    "24", "CC", "CG", "CSB", "CSE",
+    "EC", "EM", "ES", "HST", "IDS",
+    "MAD", "MAS", "SCM",
     "AS", "MS", "NS",
     "STS", "SWE", "SP"
 ]
