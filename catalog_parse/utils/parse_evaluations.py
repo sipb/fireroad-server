@@ -63,7 +63,7 @@ def parse_evaluations(evals, courses):
                     year = int(term_data[EvaluationConstants.term][:-2])
                     averaging_data.setdefault(key, []).append((value, year))
 
-        for eval_key, course_key in KEYS_TO_AVERAGE.items():
+        for eval_key, course_key in list(KEYS_TO_AVERAGE.items()):
             if eval_key not in averaging_data: continue
             values = [value for value, year in averaging_data[eval_key]]
             max_year = max(year for value, year in averaging_data[eval_key])
